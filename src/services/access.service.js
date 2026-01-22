@@ -4,10 +4,10 @@ const shopModel = require('../models/shop.model');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const KeyTokenService = require('./keytoken.service');
-const { createTokenPair } = require('../auth/authUtils');
+const { createTokenPair, verifyJWT } = require('../auth/authUtils');
 const { type } = require('os');
 const { getInfoData } = require('../utils');
-const { BadRequestError, AuthFailureError } = require('../core/error.response');
+const { BadRequestError, AuthFailureError, ForbiddenError } = require('../core/error.response');
 const { findByEmail } = require('./shop.service');
 
 const RoleShop = {
@@ -19,11 +19,54 @@ const RoleShop = {
 
 class AccessService {
 
-    static logout = async ( keyStore ) => {
+    static handlerRefreshToken = async (refreshToken) => {
+        // 1. 
+        const foundToken = await KeyTokenService.findByRefreshTokenUsed(refreshToken);
+
+        if (foundToken) {
+            // decode
+            const { userId, email } = await verifyJWT(refreshToken, foundToken.privateKey);
+            console.log({ userId, email });
+
+            // Xóa tất cả các token in keyStore của user này (ép login lại)
+            await KeyTokenService.deleteKeyById(userId);
+            throw new ForbiddenError(' Something wrong happen !! Pls re-login');
+        }
+
+        const holderToken = await KeyTokenService.findByRefreshToken( refreshToken );
+        if (!holderToken) throw new AuthFailureError(' Shop not registered');
+
+        // verifyToken
+        const { userId, email } = await verifyJWT(refreshToken, holderToken.privateKey);
+        console.log('[2]--', { userId, email });
+
+        // check Userid
+        const foundShop = await findByEmail({email});
+        if (!foundShop) throw new AuthFailureError(' Shop not registered');
+
+        // 3. Tạo 1 cặp token mới (Access Token & Refresh Token)
+        const tokens = await createTokenPair({ userId, email }, holderToken.publicKey, holderToken.privateKey);
+
+        // update token database
+        await holderToken.updateOne({
+            $set: {
+                refreshToken: tokens.refreshToken,
+            },
+            $addToSet: {
+                refreshTokensUsed: refreshToken, // Đưa token cũ vào list "đã sd"
+            },
+        });
+
+        return {
+            user: { userId, email },
+            tokens,
+        };
+    };
+
+    static logout = async (keyStore) => {
         const delKey = await KeyTokenService.removeKeyById(keyStore._id);
-        console.log('delKey:', delKey);
         return delKey;
-    }
+    };
 
     /*
         1 - check email in dbs
