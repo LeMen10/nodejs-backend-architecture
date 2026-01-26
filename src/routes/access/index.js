@@ -1,16 +1,17 @@
 const express = require('express');
 const accessController = require('../../controllers/access.controller');
 const { asyncHandler } = require('../../helpers/asyncHandler');
+const refreshTokenAuth = require('../../auth/refreshTokenAuth');
 const { authentication } = require('../../auth/authUtils');
 const router = express.Router();
 
 router.post('/shop/signup', asyncHandler(accessController.signUp));
 router.post('/shop/login', asyncHandler(accessController.login));
+router.post('/shop/refresh-token', refreshTokenAuth, asyncHandler(accessController.handlerRefreshToken));
 
 router.use(authentication);
 
 router.post('/shop/logout', asyncHandler(accessController.logout));
-router.post('/shop/refresh-token', asyncHandler(accessController.handlerRefreshToken));
 
 // router.post('/', (req, res, next) => {
 //     // const strCompress = 'hello';

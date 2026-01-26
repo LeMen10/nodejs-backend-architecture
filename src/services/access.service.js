@@ -19,41 +19,34 @@ const RoleShop = {
 
 class AccessService {
 
-    static handlerRefreshToken = async (refreshToken) => {
-        // 1. 
-        const foundToken = await KeyTokenService.findByRefreshTokenUsed(refreshToken);
+    static handlerRefreshToken = async ({ keyStore, user, refreshToken }) => {
+        const { userId, email } = user;
 
-        if (foundToken) {
-            // decode
-            const { userId, email } = await verifyJWT(refreshToken, foundToken.privateKey);
-            console.log({ userId, email });
-
-            // Xóa tất cả các token in keyStore của user này (ép login lại)
+        // 1. Check refresh token đã bị dùng chưa
+        if (keyStore.refreshTokensUsed.includes(refreshToken)) {
             await KeyTokenService.deleteKeyById(userId);
-            throw new ForbiddenError(' Something wrong happen !! Pls re-login');
+            throw new ForbiddenError('Something wrong happened! Please re-login');
         }
 
-        const holderToken = await KeyTokenService.findByRefreshToken( refreshToken );
-        if (!holderToken) throw new AuthFailureError(' Shop not registered');
+        // 2. Check refresh token hiện tại có khớp không
+        if (keyStore.refreshToken !== refreshToken) {
+            throw new AuthFailureError('Shop not registered');
+        }
 
-        // verifyToken
-        const { userId, email } = await verifyJWT(refreshToken, holderToken.privateKey);
-        console.log('[2]--', { userId, email });
+        // 3. Check user tồn tại
+        const foundShop = await findByEmail({ email });
+        if (!foundShop) throw new AuthFailureError('Shop not registered');
 
-        // check Userid
-        const foundShop = await findByEmail({email});
-        if (!foundShop) throw new AuthFailureError(' Shop not registered');
+        // 4. Tạo token mới (RS256)
+        const tokens = await createTokenPair({ userId, email }, keyStore.publicKey, keyStore.privateKey);
 
-        // 3. Tạo 1 cặp token mới (Access Token & Refresh Token)
-        const tokens = await createTokenPair({ userId, email }, holderToken.publicKey, holderToken.privateKey);
-
-        // update token database
-        await holderToken.updateOne({
+        // 5. Update refresh token
+        await keyStore.updateOne({
             $set: {
                 refreshToken: tokens.refreshToken,
             },
             $addToSet: {
-                refreshTokensUsed: refreshToken, // Đưa token cũ vào list "đã sd"
+                refreshTokensUsed: refreshToken,
             },
         });
 
@@ -75,33 +68,46 @@ class AccessService {
         4 - generate tokens
         5 - get data return login
     */
-    static login = async ({ email, password, refreshToken = null }) => {
-        // 1
+    static login = async ({ email, password }) => {
+        // 1. Check email
         const foundShop = await findByEmail({ email });
         if (!foundShop) throw new BadRequestError('Shop not registered');
 
-        // 2
+        // 2. Check password
         const match = await bcrypt.compare(password, foundShop.password);
         if (!match) throw new AuthFailureError('Authentication error');
 
-        // 3. Tạo cặp Private Key và Public Key
-        // created privateKey, publicKey
-        const privateKey = crypto.randomBytes(64).toString('hex');
-        const publicKey = crypto.randomBytes(64).toString('hex');
+        // 3. Tạo RSA key pair (RS256)
+        const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+            modulusLength: 2048,
+            publicKeyEncoding: {
+                type: 'pkcs1',
+                format: 'pem',
+            },
+            privateKeyEncoding: {
+                type: 'pkcs1',
+                format: 'pem',
+            },
+        });
 
         const { _id: userId } = foundShop;
-        const tokens = await createTokenPair({ userId, email }, publicKey, privateKey);
-        console.log('tokens login:', tokens);
 
+        // 4. Tạo token
+        const tokens = await createTokenPair({ userId, email }, publicKey, privateKey);
+
+        // 5. Lưu key & refresh token
         await KeyTokenService.createKeyToken({
-            refreshToken: tokens.refreshToken,
-            privateKey,
-            publicKey,
             userId,
+            publicKey,
+            privateKey,
+            refreshToken: tokens.refreshToken,
         });
 
         return {
-            shop: getInfoData({ fields: ['_id', 'name', 'email'], object: foundShop }),
+            shop: getInfoData({
+                fields: ['_id', 'name', 'email'],
+                object: foundShop,
+            }),
             tokens,
         };
     };
@@ -121,19 +127,19 @@ class AccessService {
 
         if (newShop) {
             // created privateKey, publicKey
-            // const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
-            //     modulusLength: 4096,
-            //     publicKeyEncoding: {
-            //         type: 'pkcs1',
-            //         format: 'pem',
-            //     },
-            //     privateKeyEncoding: {
-            //         type: 'pkcs1',
-            //         format: 'pem',
-            //     },
-            // });
-            const privateKey = crypto.randomBytes(64).toString('hex');
-            const publicKey = crypto.randomBytes(64).toString('hex');
+            const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+                modulusLength: 4096,
+                publicKeyEncoding: {
+                    type: 'pkcs1',
+                    format: 'pem',
+                },
+                privateKeyEncoding: {
+                    type: 'pkcs1',
+                    format: 'pem',
+                },
+            });
+            // const privateKey = crypto.randomBytes(64).toString('hex');
+            // const publicKey = crypto.randomBytes(64).toString('hex');
 
             // const publicKeyString = await KeyTokenService.createKeyToken({
             //     userId: newShop._id,

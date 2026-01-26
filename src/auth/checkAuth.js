@@ -4,6 +4,7 @@ const HEADER = {
     API_KEY: 'x-api-key',
     CLIENT_ID: 'x-client-id',
     AUTHORIZATION: 'authorization',
+    REFRESH_TOKEN: 'x-r-token-id',
 };
 
 const { findById } = require('../services/apikey.service');
